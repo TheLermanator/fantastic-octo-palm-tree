@@ -92,6 +92,13 @@ jobs:
           name: build-artifacts
           path: dist/
 
+      - name: Set lower-case image ref and sha tag
+        id: prep
+        shell: bash
+        run: |
+          echo "IMAGE_LC=${REGISTRY}/${IMAGE_NAME,,}" >> $GITHUB_ENV
+          echo "SHA_TAG=sha-${GITHUB_SHA}" >> $GITHUB_ENV
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -158,6 +165,13 @@ jobs:
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
+
+      - name: Prepare image ref (lowercase)
+        shell: bash
+        run: |
+          IMAGE_LC="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "IMAGE_LC=$IMAGE_LC" >> $GITHUB_ENV
+          echo "SHA_TAG=sha-${GITHUB_SHA}" >> $GITHUB_ENV
 
       - name: Update Kubernetes deployment file
         env:

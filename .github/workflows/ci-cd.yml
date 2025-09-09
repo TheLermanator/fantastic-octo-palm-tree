@@ -92,12 +92,25 @@ jobs:
           name: build-artifacts
           path: dist/
 
-      - name: Set lower-case image ref and sha tag
+      - name: Prepare lowercase image ref and tags
         id: prep
         shell: bash
         run: |
-          echo "IMAGE_LC=${REGISTRY}/${IMAGE_NAME,,}" >> $GITHUB_ENV
-          echo "SHA_TAG=sha-${GITHUB_SHA}" >> $GITHUB_ENV
+          IMAGE_LC="${{ env.REGISTRY }}/$(echo '${{ env.IMAGE_NAME }}' | tr '[:upper:]' '[:lower:]')"
+          SHA_TAG="sha-${GITHUB_SHA}"
+          echo "IMAGE_LC=$IMAGE_LC" >> "$GITHUB_ENV"
+          echo "SHA_TAG=$SHA_TAG" >> "$GITHUB_ENV"
+          echo "TRIVY_REF=${IMAGE_LC}:${SHA_TAG}" >> "$GITHUB_ENV"
+          echo "Will build/scan: ${IMAGE_LC}"
+          echo "SHA tag: ${SHA_TAG}"
+
+      - name: Assert image ref is lowercase (fails fast)
+        run: |
+          if echo "$TRIVY_REF" | grep -q '[A-Z]'; then
+            echo "::error::Image ref contains uppercase: $TRIVY_REF"
+            exit 1
+          fi
+          echo "Image ref OK: $TRIVY_REF"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -113,26 +126,29 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.IMAGE_LC }}
           tags: |
             type=sha,format=long
             type=ref,event=branch
             latest
 
-      - name: Build Docker image
+      - name: Build Docker image (load locally for Trivy)
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
           push: false
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
           load: true
+          tags: |
+            ${{ env.TRIVY_REF }}
+            ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.24.0
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
-          format: "table"
+          image-ref: ${{ env.TRIVY_REF }}
+          format: table
           exit-code: "1"
           ignore-unfixed: true
           vuln-type: "os,library"
@@ -161,17 +177,20 @@ jobs:
         with:
           token: ${{ secrets.TOKEN }}
 
+      - name: Prepare lowercase image ref
+        shell: bash
+        run: |
+          IMAGE_LC="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          SHA_TAG="sha-${GITHUB_SHA}"
+          echo "IMAGE_LC=$IMAGE_LC" >> $GITHUB_ENV
+          echo "SHA_TAG=$SHA_TAG" >> $GITHUB_ENV
+          echo "NEW_IMAGE=${IMAGE_LC}:${SHA_TAG}" >> $GITHUB_ENV
+          echo "Will set: ${NEW_IMAGE}"
+
       - name: Setup Git config
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-
-      - name: Prepare image ref (lowercase)
-        shell: bash
-        run: |
-          IMAGE_LC="ghcr.io/${GITHUB_REPOSITORY,,}"
-          echo "IMAGE_LC=$IMAGE_LC" >> $GITHUB_ENV
-          echo "SHA_TAG=sha-${GITHUB_SHA}" >> $GITHUB_ENV
 
       - name: Update Kubernetes deployment file
         env:
